@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getTheme, themes } from '../themes';
 import type { GameState } from '../core/types';
 import { createInitialState } from '../core/types';
@@ -38,6 +38,7 @@ const DemoPage: React.FC = () => {
   const [popups, setPopups] = useState<PopupItem[]>([]);
   const [scenarioActive, setScenarioActive] = useState(false);
   const [scenarioDone, setScenarioDone] = useState(false);
+  const navigate = useNavigate();
 
   const gameLoopRef = useRef<GameLoop | null>(null);
   const stateRef = useRef<GameState>(createInitialState(themeId));
@@ -137,8 +138,8 @@ const DemoPage: React.FC = () => {
 
   const handleCtaClick = useCallback(() => {
     trackEvent('cta_click', themeId, {});
-    addPopup('📝 ご意見ありがとうございます！');
-  }, [themeId, addPopup]);
+    navigate(`/lp?theme=${themeId}`);
+  }, [themeId, navigate]);
 
   // Compute visual state
   const currentVisualState = (() => {
