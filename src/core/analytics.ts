@@ -5,6 +5,7 @@ type AnalyticsEvent = {
   data: Record<string, unknown>;
 };
 
+const MAX_EVENTS = 500;
 const events: AnalyticsEvent[] = [];
 
 export function trackEvent(
@@ -18,6 +19,9 @@ export function trackEvent(
     timestamp: Date.now(),
     data,
   };
+  if (events.length >= MAX_EVENTS) {
+    events.splice(0, events.length - MAX_EVENTS + 1);
+  }
   events.push(event);
   console.log('[ANALYTICS]', JSON.stringify(event));
 }

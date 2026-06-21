@@ -20,4 +20,4 @@ const CtaButton: React.FC<CtaButtonProps> = ({ text, colors, onClick }) => {
   );
 };
 
-export default CtaButton;
+export default React.memo(CtaButton);

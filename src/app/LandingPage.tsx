@@ -268,7 +268,9 @@ const LandingPage: React.FC = () => {
           }),
         }
       );
-    } catch {}
+    } catch {
+      // webhook failures are non-critical
+    }
 
     setRegistered(true);
     setLoading(false);

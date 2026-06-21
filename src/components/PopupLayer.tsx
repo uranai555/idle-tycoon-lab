@@ -31,4 +31,4 @@ const PopupLayer: React.FC<PopupLayerProps> = ({ popups }) => {
   );
 };
 
-export default PopupLayer;
+export default React.memo(PopupLayer);
