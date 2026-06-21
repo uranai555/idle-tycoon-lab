@@ -33,4 +33,4 @@ const Hud: React.FC<HudProps> = ({ coins, incomePerSecond, level, colors }) => {
   );
 };
 
-export default Hud;
+export default React.memo(Hud);

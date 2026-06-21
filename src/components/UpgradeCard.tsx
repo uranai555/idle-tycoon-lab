@@ -7,6 +7,7 @@ interface UpgradeCardProps {
   cost: number;
   canAfford: boolean;
   purchased: boolean;
+  count?: number;
   colors: { primary: string; surface: string; text: string };
   onBuy: () => void;
 }
@@ -18,7 +19,7 @@ const formatCost = (n: number): string => {
 };
 
 const UpgradeCard: React.FC<UpgradeCardProps> = ({
-  icon, name, description, cost, canAfford, purchased, colors, onBuy
+  icon, name, description, cost, canAfford, purchased, count, colors, onBuy
 }) => {
   if (purchased) return null;
 
@@ -36,6 +37,9 @@ const UpgradeCard: React.FC<UpgradeCardProps> = ({
       <div className="upgrade-card-icon">{icon}</div>
       <div className="upgrade-card-name" style={{ color: colors.text }}>
         {name}
+        {count != null && count > 0 && (
+          <span className="upgrade-card-count"> x{count}</span>
+        )}
       </div>
       <div className="upgrade-card-desc" style={{ color: colors.text }}>
         {description}
@@ -53,4 +57,4 @@ const UpgradeCard: React.FC<UpgradeCardProps> = ({
   );
 };
 
-export default UpgradeCard;
+export default React.memo(UpgradeCard);

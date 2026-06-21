@@ -1,11 +1,11 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo, useReducer } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getTheme, themes } from '../themes';
 import type { GameState } from '../core/types';
 import { createInitialState } from '../core/types';
 import { GameLoop } from '../core/gameLoop';
 import { createScenarioChecker } from '../core/scenarioRunner';
-import { buyProducer, canAfford, getBuyCost } from '../core/economy';
+import { buyProducer, canAfford, getBuyCost, calculateIncomePerSecond } from '../core/economy';
 import { buyUpgrade as doBuyUpgrade } from '../core/upgrades';
 import { trackEvent } from '../core/analytics';
 import PhoneFrame from '../components/PhoneFrame';
@@ -22,6 +22,46 @@ interface PopupItem {
   text: string;
 }
 
+interface UIState {
+  coins: number;
+  incomePerSecond: number;
+  level: number;
+  milestonesUnlocked: string[];
+  upgrades: Record<string, { id: string; purchased: boolean }>;
+  producers: Record<string, { id: string; count: number }>;
+  scenarioActive: boolean;
+  scenarioDone: boolean;
+}
+
+type UIAction = { type: 'sync'; state: GameState };
+
+function uiReducer(_prev: UIState, action: UIAction): UIState {
+  switch (action.type) {
+    case 'sync':
+      return {
+        coins: action.state.coins,
+        incomePerSecond: action.state.incomePerSecond,
+        level: action.state.level,
+        milestonesUnlocked: action.state.milestonesUnlocked,
+        upgrades: action.state.upgrades,
+        producers: action.state.producers,
+        scenarioActive: action.state.scenarioActive,
+        scenarioDone: action.state.scenarioDone,
+      };
+  }
+}
+
+const initialUI: UIState = {
+  coins: 0,
+  incomePerSecond: 0,
+  level: 1,
+  milestonesUnlocked: [],
+  upgrades: {},
+  producers: {},
+  scenarioActive: false,
+  scenarioDone: false,
+};
+
 let popupCounter = 0;
 
 const DemoPage: React.FC = () => {
@@ -29,49 +69,31 @@ const DemoPage: React.FC = () => {
   const themeId = (searchParams.get('theme') || 'junk_repair') as GameState['themeId'];
   const theme = getTheme(themeId) || themes.junk_repair;
 
-  const [coins, setCoins] = useState(0);
-  const [incomePerSecond, setIncomePerSecond] = useState(0);
-  const [level, setLevel] = useState(1);
-  const [milestonesUnlocked, setMilestonesUnlocked] = useState<string[]>([]);
-  const [upgrades, setUpgrades] = useState<Record<string, { id: string; purchased: boolean }>>({});
-  const [producers, setProducers] = useState<Record<string, { id: string; count: number }>>({});
+  const [ui, dispatch] = useReducer(uiReducer, initialUI);
   const [popups, setPopups] = useState<PopupItem[]>([]);
-  const [scenarioActive, setScenarioActive] = useState(false);
-  const [scenarioDone, setScenarioDone] = useState(false);
   const navigate = useNavigate();
 
   const gameLoopRef = useRef<GameLoop | null>(null);
-  const stateRef = useRef<GameState>(createInitialState(themeId));
+  const checkerRef = useRef<((state: GameState) => void) | null>(null);
+  const popupTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
   const addPopup = useCallback((text: string) => {
     popupCounter++;
     const id = `popup-${popupCounter}`;
     setPopups(prev => [...prev, { id, text }]);
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       setPopups(prev => prev.filter(p => p.id !== id));
+      popupTimersRef.current.delete(timer);
     }, 2500);
-  }, []);
-
-  const syncState = useCallback((state: GameState) => {
-    stateRef.current = state;
-    setCoins(state.coins);
-    setIncomePerSecond(state.incomePerSecond);
-    setLevel(state.level);
-    setMilestonesUnlocked([...state.milestonesUnlocked]);
-    setUpgrades({ ...state.upgrades });
-    setProducers({ ...state.producers });
-    setScenarioActive(state.scenarioActive);
-    setScenarioDone(state.scenarioDone);
+    popupTimersRef.current.add(timer);
   }, []);
 
   useEffect(() => {
     const state = createInitialState(themeId);
-    stateRef.current = state;
 
     const gl = new GameLoop(state, theme, {
       onTick: (s) => {
-        syncState(s);
-        // Scenario checker runs inside the game loop
+        dispatch({ type: 'sync', state: s });
         if (s.scenarioActive) {
           checkerRef.current?.(s);
         }
@@ -86,20 +108,20 @@ const DemoPage: React.FC = () => {
 
     const scenarioChecker = createScenarioChecker(gl, theme.scenario, () => {
       trackEvent('scenario_complete', themeId, {});
-      setScenarioDone(true);
     });
     checkerRef.current = scenarioChecker;
 
     gameLoopRef.current = gl;
     gl.start();
 
+    const timers = popupTimersRef.current;
     return () => {
       gl.stop();
       gameLoopRef.current = null;
+      for (const t of timers) clearTimeout(t);
+      timers.clear();
     };
-  }, [themeId]);
-
-  const checkerRef = useRef<((state: GameState) => void) | null>(null);
+  }, [themeId, theme, addPopup]);
 
   const handleBuyProducer = useCallback((producerId: string) => {
     const gl = gameLoopRef.current;
@@ -111,12 +133,18 @@ const DemoPage: React.FC = () => {
     const result = buyProducer(gl.state, config);
     if (result.success) {
       gl.state = result.newState;
-      gl.state.incomePerSecond = 0; // Will recalculate on next tick
-      syncState(gl.state);
+      gl.markIncomeDirty();
+      const ips = calculateIncomePerSecond(
+        gl.state.producers,
+        theme.producers,
+        gl.upgradeMultipliers,
+      );
+      gl.state.incomePerSecond = ips;
+      dispatch({ type: 'sync', state: gl.state });
       addPopup(`🛒 ${config.name} 購入！`);
       trackEvent('buy_producer', themeId, { producer: producerId });
     }
-  }, [theme, themeId, syncState, addPopup]);
+  }, [theme, themeId, addPopup]);
 
   const handleBuyUpgrade = useCallback((upgradeId: string) => {
     const gl = gameLoopRef.current;
@@ -130,34 +158,40 @@ const DemoPage: React.FC = () => {
       gl.state = result.newState;
       gl.upgradeMultipliers[config.targetProducerId] =
         (gl.upgradeMultipliers[config.targetProducerId] ?? 1) * result.multiplierDelta;
-      syncState(gl.state);
+      gl.markIncomeDirty();
+      const ips = calculateIncomePerSecond(
+        gl.state.producers,
+        theme.producers,
+        gl.upgradeMultipliers,
+      );
+      gl.state.incomePerSecond = ips;
+      dispatch({ type: 'sync', state: gl.state });
       addPopup(`⬆️ ${config.name}`);
       trackEvent('buy_upgrade', themeId, { upgrade: upgradeId });
     }
-  }, [theme, themeId, syncState, addPopup]);
+  }, [theme, themeId, addPopup]);
 
   const handleCtaClick = useCallback(() => {
     trackEvent('cta_click', themeId, {});
     navigate(`/lp?theme=${themeId}`);
   }, [themeId, navigate]);
 
-  // Compute visual state
-  const currentVisualState = (() => {
+  const currentVisualState = useMemo(() => {
     let state = 'default';
     for (const ms of theme.milestones) {
-      if (milestonesUnlocked.includes(ms.id)) {
+      if (ui.milestonesUnlocked.includes(ms.id)) {
         state = ms.visualState;
       }
     }
     return state;
-  })();
+  }, [theme.milestones, ui.milestonesUnlocked]);
 
   return (
     <PhoneFrame>
       <Hud
-        coins={coins}
-        incomePerSecond={incomePerSecond}
-        level={level}
+        coins={ui.coins}
+        incomePerSecond={ui.incomePerSecond}
+        level={ui.level}
         colors={theme.colors}
       />
       <MainScene
@@ -167,11 +201,10 @@ const DemoPage: React.FC = () => {
       />
 
       <div className="upgrade-area">
-        {/* Producer buy cards */}
         {theme.producers.map((prod) => {
-          const count = producers[prod.id]?.count ?? 0;
+          const count = ui.producers[prod.id]?.count ?? 0;
           const cost = getBuyCost(prod, count);
-          const aff = canAfford(cost, coins);
+          const aff = canAfford(cost, ui.coins);
           return (
             <UpgradeCard
               key={prod.id}
@@ -179,17 +212,17 @@ const DemoPage: React.FC = () => {
               name={prod.name}
               description={prod.description}
               cost={cost}
-              canAfford={!scenarioActive && aff}
+              canAfford={!ui.scenarioActive && aff}
               purchased={false}
+              count={count}
               colors={theme.colors}
               onBuy={() => handleBuyProducer(prod.id)}
             />
           );
         })}
-        {/* Upgrade cards */}
         {theme.upgrades.map((upg) => {
-          const purchased = upgrades[upg.id]?.purchased ?? false;
-          const aff = canAfford(upg.cost, coins);
+          const purchased = ui.upgrades[upg.id]?.purchased ?? false;
+          const aff = canAfford(upg.cost, ui.coins);
           return (
             <UpgradeCard
               key={upg.id}
@@ -197,7 +230,7 @@ const DemoPage: React.FC = () => {
               name={upg.name}
               description={upg.description}
               cost={upg.cost}
-              canAfford={!scenarioActive && aff}
+              canAfford={!ui.scenarioActive && aff}
               purchased={purchased}
               colors={theme.colors}
               onBuy={() => handleBuyUpgrade(upg.id)}
@@ -208,7 +241,7 @@ const DemoPage: React.FC = () => {
 
       <PopupLayer popups={popups} />
 
-      {!scenarioActive && (
+      {!ui.scenarioActive && (
         <CtaButton
           text="このゲーム、遊んでみたい？"
           colors={theme.colors}
@@ -216,9 +249,9 @@ const DemoPage: React.FC = () => {
         />
       )}
 
-      {scenarioActive && (
+      {ui.scenarioActive && (
         <div className="scenario-badge" style={{ color: theme.colors.text }}>
-          ▶ デモ再生中 {scenarioDone ? '✓' : '...'}
+          ▶ デモ再生中 {ui.scenarioDone ? '✓' : '...'}
         </div>
       )}
     </PhoneFrame>

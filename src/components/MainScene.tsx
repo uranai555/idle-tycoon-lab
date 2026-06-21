@@ -48,4 +48,4 @@ const MainScene: React.FC<MainSceneProps> = ({ visualState, title }) => {
   );
 };
 
-export default MainScene;
+export default React.memo(MainScene);
