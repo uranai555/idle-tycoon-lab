@@ -68,7 +68,12 @@ export class GameLoop {
 
     if (this.uiAccumulated >= UI_INTERVAL_MS) {
       this.uiAccumulated = 0;
-      this.callbacks.onTick({ ...this.state });
+      this.callbacks.onTick({
+        ...this.state,
+        milestonesUnlocked: [...this.state.milestonesUnlocked],
+        producers: { ...this.state.producers },
+        upgrades: { ...this.state.upgrades },
+      });
     }
 
     this.animFrameId = requestAnimationFrame(this.tick);
